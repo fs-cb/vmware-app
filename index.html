@@ -27,6 +27,10 @@
   .mix-btn { grid-column: span 2; margin-top: 8px; background: linear-gradient(135deg, var(--accent), var(--accent2)); border: none; }
   .exam-btn { grid-column: span 2; margin-top: 8px; background: linear-gradient(135deg, #f97316, #7c3aed); border: none; }
   .study-btn { grid-column: span 2; margin-top: 8px; background: linear-gradient(135deg, #22c55e, #4f8ef7); border: none; }
+  .set-divider { grid-column: span 2; display: flex; align-items: center; gap: 12px; margin-top: 22px; color: var(--text-muted); font-size: 12px; font-weight: 700; }
+  .set-divider::before, .set-divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+  .arch-exam-btn { grid-column: span 2; background: linear-gradient(135deg, #ec4899, #7c3aed); border: none; }
+  .arch-study-btn { grid-column: span 2; margin-top: 8px; background: linear-gradient(135deg, #14b8a6, #4f8ef7); border: none; }
   .quiz-screen { animation: fadeIn 0.4s ease; }
   .progress-bar { background: var(--surface); border-radius: 50px; height: 6px; margin-bottom: 28px; overflow: hidden; border: 1px solid var(--border); }
   .progress-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); border-radius: 50px; width: 0%; transition: width 0.5s cubic-bezier(0.4,0,0.2,1); }
@@ -79,6 +83,10 @@
       <button class="cat-btn mix-btn" onclick="loadQuestions('MIX', 'practice')">ランダム &nbsp;→</button>
       <button class="cat-btn exam-btn" onclick="loadQuestions('MIX', 'exam')">本試験モード &nbsp;→</button>
       <button class="cat-btn study-btn" onclick="loadQuestions('MIX', 'study')">学習モード（20問） &nbsp;→</button>
+
+      <div class="set-divider">Architect 問題集</div>
+      <button class="cat-btn arch-exam-btn" onclick="loadQuestions('MIX', 'exam', 'Archtect')">Architect 本試験モード &nbsp;→</button>
+      <button class="cat-btn arch-study-btn" onclick="loadQuestions('MIX', 'study', 'Archtect')">Architect 学習モード（20問） &nbsp;→</button>
     </div>
   </div>
 
@@ -127,8 +135,14 @@ let currentMode = 'practice';
 let examAnswers = {};
 let currentSelections = [];
 let studyAnswered = false;
+let currentSheet = '';
 
 const PERSONAL_STATS_KEY = 'vcfQuizPersonalStats';
+
+// 画面表示用のラベル（キーはスプレッドシートのタブ名そのまま）
+const SHEET_LABELS = {
+  'Archtect': 'Architect'
+};
 
 function getPersonalStats() {
   try {
@@ -143,9 +157,16 @@ function savePersonalStats(stats) {
   localStorage.setItem(PERSONAL_STATS_KEY, JSON.stringify(stats));
 }
 
-function recordQuestionResult(questionId, isCorrect) {
-  if (!questionId) return;
+// 追加シートのIDが既存シートと衝突しないよう、シート名で名前空間を分ける。
+// 既存シート（sheet未指定）は今までどおりIDのみなので、蓄積済みの成績は維持される。
+function statKey(questionId) {
+  return currentSheet ? `${currentSheet}:${questionId}` : String(questionId);
+}
 
+function recordQuestionResult(rawId, isCorrect) {
+  if (!rawId) return;
+
+  const questionId = statKey(rawId);
   const stats = getPersonalStats();
 
   if (!stats[questionId]) {
@@ -158,11 +179,11 @@ function recordQuestionResult(questionId, isCorrect) {
   savePersonalStats(stats);
 }
 
-function getQuestionAccuracy(questionId) {
-  if (!questionId) return null;
+function getQuestionAccuracy(rawId) {
+  if (!rawId) return null;
 
   const stats = getPersonalStats();
-  const item = stats[questionId];
+  const item = stats[statKey(rawId)];
 
   if (!item || !item.answered) return null;
 
@@ -193,10 +214,11 @@ function getChoiceLabels(q) {
   return ['A', 'B', 'C', 'D', 'E', 'F', 'G'].filter(id => q[id] !== undefined && q[id] !== null && String(q[id]).trim() !== '');
 }
 
-function loadQuestions(cat, mode = 'practice') {
-  const gasUrl = "https://script.google.com/a/macros/trytree.co.jp/s/AKfycbxyDlibR1xPLpAilwAQOLteDUZqoXJzYvW3bg2ndA6yoVz9cyMX63l4Agfa_8ug6C8_/exec";
+function loadQuestions(cat, mode = 'practice', sheet = '') {
+  const gasUrl = "https://script.google.com/a/macros/trytree.co.jp/s/AKfycbz6Ts-8QD7FeXTHIARNfrleUcpXq4XlOkRsaRiPuwCLsu5UbVUiEP8MkV2ohc6CbghUjA/exec";
 
   currentMode = mode;
+  currentSheet = sheet;
   examAnswers = {};
   currentSelections = [];
   document.getElementById('startScreen').style.display = 'none';
@@ -259,6 +281,7 @@ function loadQuestions(cat, mode = 'practice') {
     callback: callbackName
   });
   params.set('limit', mode === 'exam' ? '60' : (mode === 'study' ? '20' : '10'));
+  if (sheet) params.set('sheet', sheet);
   script.src = `${gasUrl}?${params.toString()}`;
   script.onerror = function(err) {
     document.getElementById('questionText').textContent = "データの取得に失敗しました。";
@@ -282,7 +305,8 @@ function show() {
   document.getElementById('questionNum').textContent = `問題 ${idx + 1} / ${total}`;
   document.getElementById('scoreBadge').textContent = isExam ? '本試験モード' : (isStudy ? `学習: ${score}` : `正解: ${score}`);
   document.getElementById('progressFill').style.width = `${((idx + 1) / total) * 100}%`;
-  document.getElementById('categoryTag').textContent = isExam ? 'EXAM' : (isStudy ? 'STUDY' : (q.Cat || 'QUIZ'));
+  const baseTag = isExam ? 'EXAM' : (isStudy ? 'STUDY' : (q.Cat || 'QUIZ'));
+  document.getElementById('categoryTag').textContent = currentSheet ? `${SHEET_LABELS[currentSheet] || currentSheet} / ${baseTag}` : baseTag;
 
   const personalAccuracy = getQuestionAccuracy(q.ID);
   document.getElementById('personalAccuracy').style.display = isExam ? 'none' : 'block';
@@ -304,7 +328,11 @@ function show() {
     const btn = document.createElement('button');
     btn.className = 'choice-btn';
     if (currentSelections.includes(id)) btn.classList.add('selected');
-    btn.innerHTML = `<span class="choice-label">${id}</span>${q[id]}`;
+    const label = document.createElement('span');
+    label.className = 'choice-label';
+    label.textContent = id;
+    btn.appendChild(label);
+    btn.appendChild(document.createTextNode(String(q[id])));
     btn.onclick = () => handleChoice(id, btn);
     choicesDiv.appendChild(btn);
   });
